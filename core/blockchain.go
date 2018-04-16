@@ -581,6 +581,12 @@ func (bc *BlockChain) GetBlockByHash(hash common.Hash) *types.Block {
 	return bc.GetBlock(hash, bc.hc.GetBlockNumber(hash))
 }
 
+// GetBlockByHash retrieves a block from the database by hash, caching it if found.
+func (bc *BlockChain) GetTxByHash(hash common.Hash) *types.Transaction {
+    tx, _, _, _ := GetTransaction(bc.db, hash)
+	return tx
+}
+
 // GetBlockByNumber retrieves a block from the database by number, caching it
 // (associated with its hash) if found.
 func (bc *BlockChain) GetBlockByNumber(number uint64) *types.Block {

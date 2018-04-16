@@ -56,6 +56,9 @@ const (
 	GetBlockBodiesMsg  = 0x05
 	BlockBodiesMsg     = 0x06
 	NewBlockMsg        = 0x07
+    GetGrapheneMsg = 0x08
+    GrapheneMsg    = 0x09
+    GetTxMsg = 0x0a
 
 	// Protocol messages belonging to eth/63
 	GetNodeDataMsg = 0x0d
@@ -121,6 +124,17 @@ type statusData struct {
 type newBlockHashesData []struct {
 	Hash   common.Hash // Hash of one particular block being announced
 	Number uint64      // Number of one particular block being announced
+}
+
+type getGrapheneData struct {
+    NTxs uint64
+    Hash common.Hash
+}
+
+type grapheneData struct {
+    GrapheneIBLT []byte
+    GrapheneBloom []byte
+    Hash common.Hash
 }
 
 // getBlockHeadersData represents a block header query.

@@ -40,6 +40,8 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+    "github.com/willf/bloom"
+    "github.com/sasha-s/go-IBLT"
 )
 
 const (
@@ -321,6 +323,8 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 	if err != nil {
 		return err
 	}
+    log.Info("handleMS")
+    log.Info("code", "Code", msg.Code)
 	if msg.Size > ProtocolMaxMsgSize {
 		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, ProtocolMaxMsgSize)
 	}
@@ -619,7 +623,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 		}
 		for _, block := range unknown {
-			pm.fetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
+			//pm.fetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
+            pending, _ := pm.txpool.Pending()
+            p.RequestGraphene(block.Hash, len(pending))
 		}
 
 	case msg.Code == NewBlockMsg:
@@ -657,6 +663,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 	case msg.Code == TxMsg:
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
 		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
+            log.Info("Breaking bad")
 			break
 		}
 		// Transactions can be processed, parse all of them and deliver to the pool
@@ -672,6 +679,75 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			p.MarkTransaction(tx.Hash())
 		}
 		pm.txpool.AddRemotes(txs)
+
+    case msg.Code == GetTxMsg:
+        var hashes []common.Hash
+		if err := msg.Decode(&hashes); err != nil {
+			return errResp(ErrDecode, "msg %v: %v", msg, err)
+		}
+        var txs []*types.Transaction
+        for _, hash := range hashes {
+            log.Info("Retrieving transaction", "hash", hash)
+            txs = append(txs, pm.blockchain.GetTxByHash(hash))
+        }
+        if len(txs) > 0 {
+            p.SendTransactions(txs)
+        }
+
+
+    case msg.Code == GetGrapheneMsg:
+        var query getGrapheneData
+        msg.Decode(&query)
+        log.Info("Made It")
+        log.Info("Got", "nTxs", query.NTxs)
+        block := pm.blockchain.GetBlockByHash(query.Hash)
+        b := bloom.New(50, 3)
+        ib := iblt.New(3,  8)
+        log.Info("tx length", ":", len(block.Transactions()))
+        for _, tx := range block.Transactions() {
+            log.Info("Adding", "tx hash", tx.Hash())
+            b.Add(tx.Hash().Bytes())
+            ib.Add(tx.Hash().Bytes())
+            ttx :=  pm.blockchain.GetTxByHash(tx.Hash())
+            log.Info("TTx", "ttx", ttx)
+        }
+        log.Info("Before send", "local",  ib)
+        i, _ := ib.MarshalBinary()
+        //b.AddString("test")
+        //log.Info("Testing bloom", "r", b.TestString("test"))
+        bb, _ := b.GobEncode()
+        p.SendGraphene(query.Hash, i, bb)
+
+    case msg.Code == GrapheneMsg:
+        var body grapheneData
+        msg.Decode(&body)
+        receivedIBLT := iblt.New(3, 8)
+        receivedIBLT.UnmarshalBinary(body.GrapheneIBLT)
+        b := bloom.New(50, 3)
+        b.GobDecode(body.GrapheneBloom)
+        localIBLT := iblt.New(3, 8)
+        pending, _ := pm.txpool.Pending()
+        for _, txs := range pending {
+            for _, tx := range txs {
+                if (b.Test(tx.Hash().Bytes())) {
+                    localIBLT.Add(tx.Hash().Bytes())
+                }
+            }
+        }
+        log.Info("Before sub", "local",  localIBLT)
+        log.Info("Before sub", "remote",  receivedIBLT)
+        receivedIBLT.Sub(*localIBLT)
+        log.Info("After sub", "iblt",  receivedIBLT)
+        decode, _ := receivedIBLT.Decode()
+        var hashes []common.Hash
+        for _, hash  := range decode.Added {
+            hashes = append(hashes, common.BytesToHash(hash))
+        }
+        if len(hashes) > 0 {
+            p.RequestTransactions(hashes)
+        } else {
+            log.Info("No tx hash recovered. Implement this.")
+        }
 
 	default:
 		return errResp(ErrInvalidMsgCode, "%v", msg.Code)
@@ -719,9 +795,10 @@ func (pm *ProtocolManager) BroadcastTx(hash common.Hash, tx *types.Transaction) 
 	peers := pm.peers.PeersWithoutTx(hash)
 	//FIXME include this again: peers = peers[:int(math.Sqrt(float64(len(peers))))]
 	for _, peer := range peers {
-		peer.SendTransactions(types.Transactions{tx})
+        log.Info("Not broadcasting tx to", "peer", peer)
+		//peer.SendTransactions(types.Transactions{tx})
 	}
-	log.Trace("Broadcast transaction", "hash", hash, "recipients", len(peers))
+	//log.Trace("Broadcast transaction", "hash", hash, "recipients", len(peers))
 }
 
 // Mined broadcast loop
@@ -730,7 +807,7 @@ func (self *ProtocolManager) minedBroadcastLoop() {
 	for obj := range self.minedBlockSub.Chan() {
 		switch ev := obj.Data.(type) {
 		case core.NewMinedBlockEvent:
-			self.BroadcastBlock(ev.Block, true)  // First propagate block to peers
+			//self.BroadcastBlock(ev.Block, true)  // First propagate block to peers
 			self.BroadcastBlock(ev.Block, false) // Only then announce to the rest
 		}
 	}
