@@ -646,7 +646,7 @@ func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
 // line flags.
 func setListenAddress(ctx *cli.Context, cfg *p2p.Config) {
 	if ctx.GlobalIsSet(ListenPortFlag.Name) {
-		cfg.ListenAddr = fmt.Sprintf(":%d", ctx.GlobalInt(ListenPortFlag.Name))
+		cfg.ListenAddr = fmt.Sprintf("localhost:%d", ctx.GlobalInt(ListenPortFlag.Name))
 	}
 }
 
