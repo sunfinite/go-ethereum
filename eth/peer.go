@@ -169,6 +169,10 @@ func (p *peer) SendBlockBodies(bodies []*blockBody) error {
 	return p2p.Send(p.rw, BlockBodiesMsg, blockBodiesData(bodies))
 }
 
+func (p *peer) SendGraphene(hash common.Hash, i []byte, b []byte) error {
+    return p2p.Send(p.rw, GrapheneMsg, &grapheneData{Hash: hash, GrapheneIBLT: i, GrapheneBloom: b})
+}
+
 // SendBlockBodiesRLP sends a batch of block contents to the remote peer from
 // an already RLP encoded format.
 func (p *peer) SendBlockBodiesRLP(bodies []rlp.RawValue) error {
@@ -213,6 +217,18 @@ func (p *peer) RequestHeadersByNumber(origin uint64, amount int, skip int, rever
 func (p *peer) RequestBodies(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
 	return p2p.Send(p.rw, GetBlockBodiesMsg, hashes)
+}
+
+func (p* peer) RequestGraphene(hash common.Hash, nTxs int) error {
+    p.Log().Debug("Requesting graphene", "with",  nTxs, "hash", hash)
+    return p2p.Send(p.rw, GetGrapheneMsg, &getGrapheneData{NTxs: uint64(nTxs), Hash: hash})
+    //return p2p.Send(p.rw, GetGrapheneMsg, nTxs)
+}
+
+func (p* peer) RequestTransactions(hashes []common.Hash) error {
+    p.Log().Debug("Requesting transactions", "with hashes",  hashes)
+    return p2p.Send(p.rw, GetTxMsg, hashes)
+    //return p2p.Send(p.rw, GetGrapheneMsg, nTxs)
 }
 
 // RequestNodeData fetches a batch of arbitrary data from a node's known state
