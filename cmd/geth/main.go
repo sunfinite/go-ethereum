@@ -37,6 +37,8 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"gopkg.in/urfave/cli.v1"
 )
+import _ "net/http/pprof"
+import "net/http"
 
 const (
 	clientIdentifier = "geth" // Client identifier to advertise over the network
@@ -213,6 +215,9 @@ func main() {
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
 func geth(ctx *cli.Context) error {
+	go func() {
+		log.Info("PProf server started", "uri", http.ListenAndServe("localhost:6060", nil))
+	}()
 	node := makeFullNode(ctx)
 	startNode(ctx, node)
 	node.Wait()

@@ -43,6 +43,10 @@ var ProtocolVersions = []uint{eth63, eth62}
 // Number of implemented message corresponding to different protocol versions.
 var ProtocolLengths = []uint64{17, 8}
 
+// easy lookup of msg.code
+var CodeToStr = []string{"Status", "NewBlockHashes", "Tx", "GetBlockHeaders", "BlockHeaders", "GetBlockBodies",
+	"BlockBodies", "NewBlock", "GetGraphene", "Graphene", "GetTx", "Unused", "Unused", "GetNodeData", "NodeData", "GetReceipts", "Receipts"}
+
 const ProtocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
 // eth protocol message codes
@@ -56,9 +60,9 @@ const (
 	GetBlockBodiesMsg  = 0x05
 	BlockBodiesMsg     = 0x06
 	NewBlockMsg        = 0x07
-    GetGrapheneMsg = 0x08
-    GrapheneMsg    = 0x09
-    GetTxMsg = 0x0a
+	GetGrapheneMsg     = 0x08
+	GrapheneMsg        = 0x09
+	GetTxMsg           = 0x0a
 
 	// Protocol messages belonging to eth/63
 	GetNodeDataMsg = 0x0d
@@ -127,14 +131,17 @@ type newBlockHashesData []struct {
 }
 
 type getGrapheneData struct {
-    NTxs uint64
-    Hash common.Hash
+	NTxs uint
+	Hash common.Hash
 }
 
 type grapheneData struct {
-    GrapheneIBLT []byte
-    GrapheneBloom []byte
-    Hash common.Hash
+	GrapheneIBLT  []byte
+	GrapheneBloom []byte
+	NBloom        uint
+	NIBLT         uint
+	NTxs          uint
+	Hash          common.Hash
 }
 
 // getBlockHeadersData represents a block header query.
