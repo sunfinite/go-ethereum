@@ -528,6 +528,7 @@ func (pool *TxPool) Pending() (map[common.Address]types.Transactions, error) {
 
 	pending := make(map[common.Address]types.Transactions)
 	for addr, list := range pool.pending {
+		log.Debug("In Pending")
 		pending[addr] = list.Flatten()
 	}
 	return pending, nil
@@ -775,6 +776,7 @@ func (pool *TxPool) AddLocals(txs []*types.Transaction) []error {
 // If the senders are not among the locally tracked ones, full pricing constraints
 // will apply.
 func (pool *TxPool) AddRemotes(txs []*types.Transaction) []error {
+	log.Info("Adding tx")
 	return pool.addTxs(txs, false)
 }
 
