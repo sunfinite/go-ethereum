@@ -138,10 +138,12 @@ type getGrapheneData struct {
 type grapheneData struct {
 	GrapheneIBLT  []byte
 	GrapheneBloom []byte
-	NBloom        uint
+	FPR           uint
 	NIBLT         uint
 	NTxs          uint
 	Hash          common.Hash
+	Indices       []byte
+	Uncles        []*types.Header
 }
 
 // getBlockHeadersData represents a block header query.

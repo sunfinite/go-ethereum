@@ -111,6 +111,9 @@ type Config struct {
 
 	// Enables tracking of SHA3 preimages in the VM
 	EnablePreimageRecording bool
+    NoGossip bool
+    UseGraphene bool
+    CpuProfile string
 
 	// Miscellaneous options
 	DocRoot string `toml:"-"`

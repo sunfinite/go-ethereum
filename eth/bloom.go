@@ -55,7 +55,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+    "time"
 
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/spaolacci/murmur3"
 	"github.com/willf/bitset"
 )
@@ -119,6 +121,10 @@ func (f *BloomFilter) location(h [4]uint64, i uint) uint {
 	return uint(location(h, i) % uint64(f.m))
 }
 
+func (f *BloomFilter) GetBitSet() bitset.BitSet {
+    return *f.b
+}
+
 // EstimateParameters estimates requirements for m and k.
 // Based on https://bitbucket.org/ww/bloom/src/829aa19d01d9/bloom.go
 // used with permission.
@@ -148,8 +154,12 @@ func (f *BloomFilter) K() uint {
 // Add data to the Bloom Filter. Returns the filter (allows chaining)
 func (f *BloomFilter) Add(data []byte) *BloomFilter {
 	//h := baseHashes(data)
+    //log.Info("k", "k", f.k)
+    l := uint(len(data))
 	for i := uint(0); i < f.k; i++ {
-		f.b.Set(uint(data[i]) % f.m)
+        //log.Info("data[i]", "i", data[i])
+		f.b.Set(uint(data[i % l]) % f.m)
+        //f.b.Set(f.location(h, i))
 	}
 	return f
 }
@@ -185,12 +195,19 @@ func (f *BloomFilter) AddString(data string) *BloomFilter {
 // If true, the result might be a false positive. If false, the data
 // is definitely not in the set.
 func (f *BloomFilter) Test(data []byte) bool {
-	//h := baseHashes(data)
+    start := time.Now()
+//	h := baseHashes(data)
+    l := uint(len(data))
 	for i := uint(0); i < f.k; i++ {
-		if !f.b.Test(uint(data[i]) % f.m) {
+		if !f.b.Test(uint(data[i % l]) % f.m) {
+        //if !f.b.Test(f.location(h, i)) {
+            elapsed := time.Since(start)
+            log.Info("Test took", "duration", elapsed)
 			return false
 		}
 	}
+    elapsed := time.Since(start)
+    log.Info("Test took", "duration", elapsed)
 	return true
 }
 

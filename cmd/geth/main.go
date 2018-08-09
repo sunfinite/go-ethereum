@@ -24,6 +24,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+//    "math/rand"
+//    "strconv"
+//    "runtime/pprof"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
@@ -37,8 +40,8 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"gopkg.in/urfave/cli.v1"
 )
-import _ "net/http/pprof"
-import "net/http"
+//import _ "net/http/pprof"
+//import "net/http"
 
 const (
 	clientIdentifier = "geth" // Client identifier to advertise over the network
@@ -60,6 +63,9 @@ var (
 		utils.DataDirFlag,
 		utils.KeyStoreDirFlag,
 		utils.NoUSBFlag,
+		utils.NoGossipFlag,
+		utils.UseGrapheneFlag,
+		utils.CpuProfileFlag,
 		utils.DashboardEnabledFlag,
 		utils.DashboardAddrFlag,
 		utils.DashboardPortFlag,
@@ -215,9 +221,22 @@ func main() {
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
 func geth(ctx *cli.Context) error {
-	go func() {
-		log.Info("PProf server started", "uri", http.ListenAndServe("localhost:6060", nil))
-	}()
+    /*go func() {
+        rand.Seed(time.Now().Unix())
+        port := rand.Intn(42) + 6060
+        pprof_server := "0.0.0.0:" + strconv.Itoa(port)
+        uri := http.ListenAndServe(pprof_server, nil)
+        log.Info(pprof_server)
+		log.Info("PProf server started", "uri", uri)
+	}()*/
+
+/*    cpuprof := ctx.GlobalString(utils.CpuProfileFlag.Name)
+    log.Info("Heres", "file", cpuprof)
+    if cpuprof != "" {
+        f, _ := os.Create(cpuprof)
+        pprof.StartCPUProfile(f)
+        defer pprof.StopCPUProfile()
+    }*/
 	node := makeFullNode(ctx)
 	startNode(ctx, node)
 	node.Wait()

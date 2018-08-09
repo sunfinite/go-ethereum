@@ -178,6 +178,7 @@ func (m *txSortedMap) Remove(nonce uint64) bool {
 func (m *txSortedMap) Ready(start uint64) types.Transactions {
 	// Short circuit if no transactions are available
 	if m.index.Len() == 0 || (*m.index)[0] > start {
+        //log.Info("Short circuting in Ready", "m.index", (*m.index)[0])
 		return nil
 	}
 	// Otherwise start accumulating incremental transactions

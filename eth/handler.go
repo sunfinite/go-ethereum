@@ -26,6 +26,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"runtime/pprof"
+	"os"
+	"sort"
+	"encoding/binary"
+
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -57,6 +62,8 @@ const (
 var (
 	daoChallengeTimeout = 15 * time.Second // Time allowance for a node to reply to the DAO handshake challenge
 )
+
+var grapheneProfile = pprof.NewProfile("graphene")
 
 // errIncompatibleConfig is returned if the requested protocols and configs are
 // not compatible (low protocol version restrictions and high requirements).
@@ -97,11 +104,16 @@ type ProtocolManager struct {
 	// wait group is used for graceful shutdowns during downloading
 	// and processing
 	wg sync.WaitGroup
+
+	noGossip bool
+	cpuProfile string
+	useGraphene bool
+	fake_pendingPool [][]byte
 }
 
 // NewProtocolManager returns a new Ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
 // with the Ethereum network.
-func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, networkId uint64, mux *event.TypeMux, txpool txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database) (*ProtocolManager, error) {
+func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, networkId uint64, mux *event.TypeMux, txpool txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database, noGossip bool, cpuProfile string, useGraphene bool) (*ProtocolManager, error) {
 	// Create the protocol manager with the base fields
 	manager := &ProtocolManager{
 		networkId:   networkId,
@@ -114,6 +126,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		noMorePeers: make(chan struct{}),
 		txsyncCh:    make(chan *txsync),
 		quitSync:    make(chan struct{}),
+		noGossip: noGossip,
+		cpuProfile: cpuProfile,
+		useGraphene: useGraphene,
 	}
 	// Figure out whether to allow fast sync or not
 	if mode == downloader.FastSync && blockchain.CurrentBlock().NumberU64() > 0 {
@@ -164,6 +179,19 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	// Construct the different synchronisation mechanisms
 	manager.downloader = downloader.New(mode, chaindb, manager.eventMux, blockchain, nil, manager.removePeer)
 
+	fake_limit := 70000
+	manager.fake_pendingPool = make([][]byte, fake_limit)
+	for i := range manager.fake_pendingPool {
+		manager.fake_pendingPool[i] = make([]byte, 5)
+	}
+	fake_count := 0
+	sim_tx_hash := make([]byte, 5)
+	for fake_count < fake_limit {
+		rand.Read(sim_tx_hash)
+		manager.fake_pendingPool = append(manager.fake_pendingPool, sim_tx_hash)
+		fake_count += 1
+	}
+
 	validator := func(header *types.Header) error {
 		return engine.VerifyHeader(blockchain, header, true)
 	}
@@ -206,10 +234,15 @@ func (pm *ProtocolManager) removePeer(id string) {
 func (pm *ProtocolManager) Start(maxPeers int) {
 	pm.maxPeers = maxPeers
 
-	// broadcast transactions
-	pm.txCh = make(chan core.TxPreEvent, txChanSize)
-	pm.txSub = pm.txpool.SubscribeTxPreEvent(pm.txCh)
-	go pm.txBroadcastLoop()
+	if (!pm.noGossip) {
+		// broadcast transactions
+		pm.txCh = make(chan core.TxPreEvent, txChanSize)
+		pm.txSub = pm.txpool.SubscribeTxPreEvent(pm.txCh)
+		go pm.txBroadcastLoop()
+	} else {
+		log.Info("Here yo")
+		log.Info("tx broadcast disabled")
+	}
 
 	// broadcast mined blocks
 	pm.minedBlockSub = pm.eventMux.Subscribe(core.NewMinedBlockEvent{})
@@ -324,9 +357,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 	if err != nil {
 		return err
 	}
-	log.Info("handleMS")
-	log.Info("code", "Int Code", msg.Code)
-	log.Info("code", "Code", CodeToStr[msg.Code])
+	log.Info("Received Message", "Code", CodeToStr[msg.Code])
 	if msg.Size > ProtocolMaxMsgSize {
 		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, ProtocolMaxMsgSize)
 	}
@@ -471,6 +502,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 
 	case msg.Code == GetBlockBodiesMsg:
+		start := time.Now()
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -495,9 +527,12 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				bytes += len(data)
 			}
 		}
+		elapsed := time.Since(start)
+		log.Info("GetBlockBodies took", "duration", elapsed)
 		return p.SendBlockBodiesRLP(bodies)
 
 	case msg.Code == BlockBodiesMsg:
+		start := time.Now()
 		// A batch of block bodies arrived to one of our previous requests
 		var request blockBodiesData
 		if err := msg.Decode(&request); err != nil {
@@ -522,6 +557,8 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				log.Debug("Failed to deliver bodies", "err", err)
 			}
 		}
+		elapsed := time.Since(start)
+		log.Info("BlockBodies took", "duration", elapsed)
 
 	case p.version >= eth63 && msg.Code == GetNodeDataMsg:
 		// Decode the retrieval message
@@ -609,6 +646,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 
 	case msg.Code == NewBlockHashesMsg:
+		start := time.Now()
 		var announces newBlockHashesData
 		if err := msg.Decode(&announces); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
@@ -625,14 +663,21 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 		}
 		for _, block := range unknown {
-			//pm.fetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
-			pending, _ := pm.txpool.Pending()
-			nTxs := 0
-			for _, txs := range pending {
-				nTxs += len(txs)
+			if pm.useGraphene {
+				pending, _ := pm.txpool.Pending()
+				nTxs := 0
+				for _, txs := range pending {
+					nTxs += len(txs)
+				}
+				log.Info("Actual m", "m", nTxs)
+				nTxs = 40000
+				p.RequestGraphene(block.Hash, nTxs)
+			} else {
+				pm.fetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
 			}
-			p.RequestGraphene(block.Hash, nTxs)
 		}
+		elapsed := time.Since(start)
+		log.Info("NewBlockHashes took", "duration", elapsed)
 
 	case msg.Code == NewBlockMsg:
 		// Retrieve and decode the propagated block
@@ -675,7 +720,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		diff_ratio := 0.2
 		if rand.Float64() < diff_ratio {
 			log.Info("Skipping")
-			break
+			//break
 		}
 		// Transactions can be processed, parse all of them and deliver to the pool
 		var txs []*types.Transaction
@@ -706,6 +751,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 
 	case msg.Code == GetGrapheneMsg:
+		start := time.Now()
 		var query getGrapheneData
 		msg.Decode(&query)
 		log.Info("Made It")
@@ -713,23 +759,24 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		var m, n, k uint
 		var c, tau, a float64
 		m = query.NTxs
-		n = uint(len(block.Transactions()))
+		txs := block.Transactions()
+		n = uint(len(txs))
 		if n == 0 {
 			log.Info("GetGraphene for empty block", "hash", query.Hash)
 			// p.SendGraphene(query.Hash, empty, empty, 0, 0)
 			return nil
 		}
 		c = 8 * math.Pow(math.Log(2), 2)
-		tau = 15.0
+		tau = 50.0
 		k = 3
 		a = float64(n) / (c * tau)
+		fpr := a / float64((m - n) + 1)
 		log.Info("Alpha", "a", a)
 		log.Info("m", "m", m)
 		log.Info("n", "n", n)
-		nb := uint(-1 * float64(n) * math.Log(a/math.Abs(float64(m-n))) / math.Pow(math.Log(2), 2))
-		log.Info("Number of bits in bloom filter", "nBits", nb)
-		b := NewBloomFilter(nb, k)
-		nCells := int(math.Ceil(a * 8.5))
+		log.Info("Calculated FPR", "fpr", fmt.Sprintf("%.8f", fpr))
+		b := NewWithEstimates(n, 0.0001)
+		nCells := int(math.Ceil(a * 1.5))
 		nCellsCeil := 1
 		log.Info("Starting with", "ncells", nCells)
 		// find the next highest power of 2
@@ -741,79 +788,154 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		if nCellsCeil < 32 {
 			nCellsCeil = 32
 		}
-		log.Info("Number of cells in IBLT", "nCells", nCellsCeil)
+		//log.Info("Number of cells in IBLT", "nCells", nCellsCeil)
 		ib := NewIBLT(int(k), nCellsCeil)
-		log.Info("tx length", ":", len(block.Transactions()))
-		for _, tx := range block.Transactions() {
+		//log.Info("tx length", ":", len(block.Transactions()))
+		tx_ids := make([]string, n)
+		tx_index_map  := make(map[string]uint32)
+		elapsed := time.Since(start)
+		log.Info("Init stuff took", "duration", elapsed)
+		for i, tx := range txs {
 			//log.Info("Adding", "tx hash", tx.Hash())
-			tx_hash := tx.Hash().Bytes()
+			tx_hash := tx.Hash().Bytes()[:5]
+			tx_hash_string := string(tx_hash[:])
 			b.Add(tx_hash)
 			ib.Add(tx_hash)
 			//ttx := pm.blockchain.GetTxByHash(tx.Hash())
 			//log.Info("TTx", "ttx", ttx)
+			tx_ids = append(tx_ids, tx_hash_string)
+			tx_index_map[tx_hash_string] = uint32(i)
 		}
+		elapsed = time.Since(start)
+		log.Info("Adding stuff took", "duration", elapsed)
+		sort.Strings(tx_ids)
+		indexArray := make([]byte, n * 4)
+		for _, tx_id := range tx_ids {
+			bs := make([]byte, 4)
+			binary.LittleEndian.PutUint32(bs, tx_index_map[tx_id])
+			indexArray = append(indexArray, bs...)
+		}
+		elapsed = time.Since(start)
+		log.Info("Sorting stuff took", "duration", elapsed)
 		log.Info("Sending bloom", "local", b)
 		log.Info("Sending IBLT", "local", ib)
+		log.Info("Sending indexArray", "local", indexArray)
 		i, _ := ib.MarshalBinary()
 		//b.AddString("test")
 		//log.Info("Testing bloom", "r", b.TestString("test"))
 		bb, _ := b.GobEncode()
 		log.Info("Encoded bloom length", "enc", len(bb))
 		log.Info("Encoded iblt length", "enc", len(i))
-		p.SendGraphene(query.Hash, i, bb, uint(nCellsCeil), nb, uint(n))
+		//mb := NewBloomFilter(nb, k)
+		//mb.GobDecode(bb)
+		//log.Info("Recovered bloom", "bloom", b)
+		//log.Info("Equality check", "bloom", mb.Equal(b))
+		p.SendGraphene(query.Hash, i, bb, uint(nCellsCeil), uint(fpr), uint(n), indexArray, block.Uncles())
+		elapsed = time.Since(start)
+		log.Info("GetGraphene took", "duration", elapsed)
 
 	case msg.Code == GrapheneMsg:
+		start := time.Now()
 		var body grapheneData
 		msg.Decode(&body)
+		if pm.cpuProfile != "" {
+			grapheneProfile.Add(msg, 1)
+		}
 		var k uint
 		k = 3
-		log.Info("Graphene says", "n transactions", body.NTxs)
 
 		receivedIBLT := NewIBLT(int(k), int(body.NIBLT))
 		receivedIBLT.UnmarshalBinary(body.GrapheneIBLT)
+		log.Info("Received uncles", "length", len(body.Uncles))
 
-		b := NewBloomFilter(body.NBloom, k)
+		//b := NewBloomFilter(body.NBloom, k)
+		b := NewWithEstimates(body.NTxs, 0.0001)
 		b.GobDecode(body.GrapheneBloom)
-		log.Info("Received bloom", "bloom", b)
-		nExisting := 0
+		//log.Info("Received bloom", "bloom", b)
+		nAddedToBloom := 0
+		nTested := 0
 		localIBLT := NewIBLT(int(k), int(body.NIBLT))
 		pending, _ := pm.txpool.Pending()
+		short_tx_hash_map := make(map[string]*types.Transaction)
+		elapsed := time.Since(start)
+		log.Info("Receiving stuff took", "duration", elapsed)
 		for _, txs := range pending {
 			for _, tx := range txs {
-				log.Info("Testing", "tx hash", tx.Hash())
-				if b.Test(tx.Hash().Bytes()) {
-					nExisting += 1
-					log.Info("Adding to IBLT", "tx hash", tx.Hash())
-					localIBLT.Add(tx.Hash().Bytes())
+				nTested += 1
+				tx_hash := tx.Hash().Bytes()[:5]
+				tx_hash_string := string(tx_hash[:])
+				short_tx_hash_map[tx_hash_string] = tx
+				if b.Test(tx_hash) {
+					nAddedToBloom += 1
+					//localIBLT.Add(tx_hash)
 				}
+                //elapsed = time.Since(start)
+                //log.Info("Test took", "duration", elapsed)
 			}
 		}
-		if nExisting == int(body.NTxs) {
-			log.Info("We already have all transactions")
+
+		for nTested < 60000 {
+			if b.Test(pm.fake_pendingPool[nTested]) {
+				nAddedToBloom += 1
+				//localIBLT.Add(pm.fake_pendingPool[nTested])
+			}
+			nTested += 1
 		}
-		log.Info("Local IBLT before sub", "local", localIBLT)
-		log.Info("Remote IBLT before sub", "remote", receivedIBLT)
-		receivedIBLT.Sub(*localIBLT)
-		log.Info("Local IBLT after sub", "iblt", receivedIBLT)
-		decode, _ := receivedIBLT.Decode()
-		var hashes []common.Hash
-		for _, hash := range decode.Added {
-			hashes = append(hashes, common.BytesToHash(hash))
+		elapsed = time.Since(start)
+		log.Info("Bloom stuff took", "duration", elapsed)
+		//log.Info("Local IBLT before sub", "local", localIBLT)
+		//log.Info("Remote IBLT before sub", "remote", receivedIBLT)
+		//log.Info("Received indexArray", "remote", body.Indices)
+		localIBLT.Sub(*receivedIBLT)
+		//log.Info("Local IBLT after sub", "iblt", localIBLT)
+		decode, _ := localIBLT.Decode()
+		elapsed = time.Since(start)
+		log.Info("Decode stuff took", "duration", elapsed)
+		log.Info("Graphene says", "n transactions", body.NTxs)
+		log.Info("IBLT cells", "nIBLT", body.NIBLT)
+		log.Info("FPR", "fpr", body.FPR)
+		log.Info("Tested in bloom", "nTested", nTested)
+		log.Info("Added to bloom", "nAddedToBloom", nAddedToBloom)
+		log.Info("Extra added to IBLT", "nAdded", len(decode.Added))
+		log.Info("Missing from IBLT", "nRemoved", len(decode.Removed))
+		log.Info("Encoded bloom length", "enc", len(body.GrapheneBloom))
+		log.Info("Encoded iblt length", "enc", len(body.GrapheneIBLT))
+		for _, tx_hash := range decode.Added {
+			tx_hash_string := string(tx_hash[:])
+			short_tx_hash_map[tx_hash_string] = nil
 		}
-		nRecovered := len(hashes)
-		log.Info("Recovered length", "n", nRecovered)
-		log.Info("Existing length", "n", nExisting)
-		if nExisting+nRecovered < int(body.NTxs) {
-			log.Info("Unrecovered txs! Double-double")
-		} else if nExisting+nRecovered >= int(body.NTxs) {
-			log.Info("Graphene Success!")
+		tx_ids := make([]string, body.NTxs)
+		for k, _ := range short_tx_hash_map {
+			tx_ids = append(tx_ids, k)
 		}
-		if len(hashes) > 0 {
-			log.Info("Recovered", "txs", hashes)
+		sort.Strings(tx_ids)
+		txs := make([]*types.Transaction, body.NTxs)
+		for i, tx_id := range tx_ids {
+			index := binary.LittleEndian.Uint32(body.Indices[4*i:4*i+4])
+			//log.Info("Recovered index", "index", index)
+			txs[index] = short_tx_hash_map[tx_id]
+		}
+		log.Info("Finished ordering txs")
+		if pm.cpuProfile != "" {
+			f, _ := os.Create(pm.cpuProfile)
+			grapheneProfile.WriteTo(f, 0)
+			grapheneProfile.Remove(msg)
+		}
+		// log.Info("Recovered length", "n", nRecovered)
+		// log.Info("Existing length", "n", nExisting)
+		// if nExisting+nRecovered < int(body.NTxs) {
+		//		log.Info("Unrecovered txs! Double-double")
+		// } else if nExisting+nRecovered >= int(body.NTxs) {
+	// 		log.Info("Graphene Success!")
+	//	}
+	//	if len(hashes) > 0 {
+	//		log.Info("Recovered", "txs", hashes)
 			// p.RequestTransactions(hashes)
-		} else {
-			log.Info("No tx hash recovered. Implement this.")
-		}
+	//	} else {
+	//		log.Info("No tx hash recovered. Implement this.")
+	//	}
+		elapsed = time.Since(start)
+		log.Info("Processing Graphene took", "duration", elapsed)
 
 	default:
 		return errResp(ErrInvalidMsgCode, "%v", msg.Code)

@@ -126,6 +126,18 @@ var (
 		Name:  "nousb",
 		Usage: "Disables monitoring for and managing USB hardware wallets",
 	}
+	NoGossipFlag = cli.BoolFlag{
+		Name:  "nogossip",
+		Usage: "Disables tx broadcast",
+	}
+	UseGrapheneFlag = cli.BoolFlag{
+		Name:  "graphene",
+		Usage: "Use graphene",
+	}
+	CpuProfileFlag = cli.StringFlag{
+		Name:  "graphenecpuprofile",
+		Usage: "Write cpu prof to specified file",
+	}
 	NetworkIdFlag = cli.Uint64Flag{
 		Name:  "networkid",
 		Usage: "Network identifier (integer, 1=Frontier, 2=Morden (disused), 3=Ropsten, 4=Rinkeby)",
@@ -1111,6 +1123,23 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 	if gen := ctx.GlobalInt(TrieCacheGenFlag.Name); gen > 0 {
 		state.MaxTrieCacheGen = uint16(gen)
 	}
+
+	if ctx.GlobalIsSet(NoGossipFlag.Name) {
+		cfg.NoGossip = ctx.GlobalBool(NoGossipFlag.Name)
+	}
+
+	if ctx.GlobalIsSet(UseGrapheneFlag.Name) {
+		cfg.UseGraphene = ctx.GlobalBool(NoGossipFlag.Name)
+	}
+
+	if ctx.GlobalIsSet(NoGossipFlag.Name) {
+		cfg.NoGossip = ctx.GlobalBool(NoGossipFlag.Name)
+	}
+
+    if cpuprof := ctx.GlobalString(CpuProfileFlag.Name); cpuprof != " " {
+        cfg.CpuProfile = cpuprof
+    }
+
 }
 
 // SetDashboardConfig applies dashboard related command line flags to the config.
