@@ -357,7 +357,12 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 	if err != nil {
 		return err
 	}
+    /*
 	log.Info("Received Message", "Code", CodeToStr[msg.Code])
+	log.Info("handleMS")
+	log.Info("code", "Int Code", msg.Code)
+	log.Info("code", "Code", CodeToStr[msg.Code])
+    */
 	if msg.Size > ProtocolMaxMsgSize {
 		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, ProtocolMaxMsgSize)
 	}
@@ -663,18 +668,18 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 		}
 		for _, block := range unknown {
-			if pm.useGraphene {
-				pending, _ := pm.txpool.Pending()
-				nTxs := 0
-				for _, txs := range pending {
-					nTxs += len(txs)
-				}
-				log.Info("Actual m", "m", nTxs)
-				nTxs = 40000
-				p.RequestGraphene(block.Hash, nTxs)
-			} else {
-				pm.fetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
-			}
+            if pm.useGraphene {
+                pending, _ := pm.txpool.Pending()
+                nTxs := 0
+                for _, txs := range pending {
+                    nTxs += len(txs)
+                }
+                log.Info("Actual m", "m", nTxs)
+                nTxs = 40000
+                p.RequestGraphene(block.Hash, nTxs)
+            } else {
+                pm.fetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
+            }
 		}
 		elapsed := time.Since(start)
 		log.Info("NewBlockHashes took", "duration", elapsed)

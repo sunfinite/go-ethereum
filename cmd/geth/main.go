@@ -237,6 +237,10 @@ func geth(ctx *cli.Context) error {
         pprof.StartCPUProfile(f)
         defer pprof.StopCPUProfile()
     }*/
+    /*
+	go func() {
+		log.Info("PProf server started", "uri", http.ListenAndServe("localhost:6060", nil))
+	}()*/
 	node := makeFullNode(ctx)
 	startNode(ctx, node)
 	node.Wait()

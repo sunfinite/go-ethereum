@@ -56,7 +56,6 @@ import (
 	"io"
 	"math"
     "time"
-
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/spaolacci/murmur3"
 	"github.com/willf/bitset"
