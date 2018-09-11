@@ -73,6 +73,7 @@ var AppHelpFlagGroups = []flagGroup{
 			utils.NoUSBFlag,
 			utils.NoGossipFlag,
 			utils.UseGrapheneFlag,
+			utils.UseBloomWithoutHashFlag,
 			utils.NetworkIdFlag,
 			utils.TestnetFlag,
 			utils.RinkebyFlag,

@@ -138,7 +138,7 @@ type getGrapheneData struct {
 type grapheneData struct {
 	GrapheneIBLT  []byte
 	GrapheneBloom []byte
-	FPR           uint
+	NTxPool       uint
 	NIBLT         uint
 	NTxs          uint
 	Hash          common.Hash

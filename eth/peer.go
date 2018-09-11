@@ -169,8 +169,8 @@ func (p *peer) SendBlockBodies(bodies []*blockBody) error {
 	return p2p.Send(p.rw, BlockBodiesMsg, blockBodiesData(bodies))
 }
 
-func (p *peer) SendGraphene(hash common.Hash, i []byte, b []byte, ni uint, fpr uint, nTxs uint, indexArray []byte, uncles []*types.Header) error {
-	return p2p.Send(p.rw, GrapheneMsg, &grapheneData{Hash: hash, GrapheneIBLT: i, GrapheneBloom: b, NIBLT: ni, FPR: fpr,
+func (p *peer) SendGraphene(hash common.Hash, i []byte, b []byte, ni uint, nTxPool uint, nTxs uint, indexArray []byte, uncles []*types.Header) error {
+	return p2p.Send(p.rw, GrapheneMsg, &grapheneData{Hash: hash, GrapheneIBLT: i, GrapheneBloom: b, NIBLT: ni, NTxPool: nTxPool,
 		NTxs: nTxs, Indices: indexArray, Uncles: uncles})
 }
 

@@ -134,6 +134,10 @@ var (
 		Name:  "graphene",
 		Usage: "Use graphene",
 	}
+	UseBloomWithoutHashFlag = cli.BoolFlag{
+		Name:  "nohashbloom",
+		Usage: "Don't use hash function in Bloom filter",
+	}
 	CpuProfileFlag = cli.StringFlag{
 		Name:  "graphenecpuprofile",
 		Usage: "Write cpu prof to specified file",
@@ -1129,11 +1133,11 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 	}
 
 	if ctx.GlobalIsSet(UseGrapheneFlag.Name) {
-		cfg.UseGraphene = ctx.GlobalBool(NoGossipFlag.Name)
+		cfg.UseGraphene = ctx.GlobalBool(UseGrapheneFlag.Name)
 	}
 
-	if ctx.GlobalIsSet(NoGossipFlag.Name) {
-		cfg.NoGossip = ctx.GlobalBool(NoGossipFlag.Name)
+	if ctx.GlobalIsSet(UseBloomWithoutHashFlag.Name) {
+		cfg.UseBloomWithoutHash = ctx.GlobalBool(UseBloomWithoutHashFlag.Name)
 	}
 
     if cpuprof := ctx.GlobalString(CpuProfileFlag.Name); cpuprof != " " {

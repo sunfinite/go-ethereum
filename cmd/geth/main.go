@@ -65,6 +65,7 @@ var (
 		utils.NoUSBFlag,
 		utils.NoGossipFlag,
 		utils.UseGrapheneFlag,
+        utils.UseBloomWithoutHashFlag,
 		utils.CpuProfileFlag,
 		utils.DashboardEnabledFlag,
 		utils.DashboardAddrFlag,

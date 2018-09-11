@@ -108,12 +108,13 @@ type ProtocolManager struct {
 	noGossip bool
 	cpuProfile string
 	useGraphene bool
+    useBloomWithoutHash bool
 	fake_pendingPool [][]byte
 }
 
 // NewProtocolManager returns a new Ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
 // with the Ethereum network.
-func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, networkId uint64, mux *event.TypeMux, txpool txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database, noGossip bool, cpuProfile string, useGraphene bool) (*ProtocolManager, error) {
+func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, networkId uint64, mux *event.TypeMux, txpool txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database, noGossip bool, cpuProfile string, useGraphene bool, useBloomWithoutHash bool) (*ProtocolManager, error) {
 	// Create the protocol manager with the base fields
 	manager := &ProtocolManager{
 		networkId:   networkId,
@@ -129,6 +130,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		noGossip: noGossip,
 		cpuProfile: cpuProfile,
 		useGraphene: useGraphene,
+        useBloomWithoutHash: useBloomWithoutHash,
 	}
 	// Figure out whether to allow fast sync or not
 	if mode == downloader.FastSync && blockchain.CurrentBlock().NumberU64() > 0 {
@@ -376,6 +378,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 
 	// Block header query, collect the requested headers and reply
 	case msg.Code == GetBlockHeadersMsg:
+		start := time.Now()
 		// Decode the complex header query
 		var query getBlockHeadersData
 		if err := msg.Decode(&query); err != nil {
@@ -451,9 +454,14 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				query.Origin.Number += query.Skip + 1
 			}
 		}
-		return p.SendBlockHeaders(headers)
+		ret := p.SendBlockHeaders(headers)
+		elapsed := time.Since(start)
+		log.Info("GetBlockHeaders took", "duration", elapsed)
+        return ret
+
 
 	case msg.Code == BlockHeadersMsg:
+		start := time.Now()
 		// A batch of headers arrived to one of our previous requests
 		var headers []*types.Header
 		if err := msg.Decode(&headers); err != nil {
@@ -505,6 +513,8 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				log.Debug("Failed to deliver headers", "err", err)
 			}
 		}
+		elapsed := time.Since(start)
+		log.Info(" BlockHeaders took", "duration", elapsed)
 
 	case msg.Code == GetBlockBodiesMsg:
 		start := time.Now()
@@ -532,9 +542,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				bytes += len(data)
 			}
 		}
+		ret := p.SendBlockBodiesRLP(bodies)
 		elapsed := time.Since(start)
 		log.Info("GetBlockBodies took", "duration", elapsed)
-		return p.SendBlockBodiesRLP(bodies)
+		log.Info("GetBlockBodies bytes", "bytes", bytes)
+        return ret
 
 	case msg.Code == BlockBodiesMsg:
 		start := time.Now()
@@ -563,7 +575,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 		}
 		elapsed := time.Since(start)
-		log.Info("BlockBodies took", "duration", elapsed)
+		log.Info(" BlockBodies took", "duration", elapsed)
 
 	case p.version >= eth63 && msg.Code == GetNodeDataMsg:
 		// Decode the retrieval message
@@ -675,7 +687,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
                     nTxs += len(txs)
                 }
                 log.Info("Actual m", "m", nTxs)
-                nTxs = 40000
+                nTxs = 60000
                 p.RequestGraphene(block.Hash, nTxs)
             } else {
                 pm.fetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
@@ -685,6 +697,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		log.Info("NewBlockHashes took", "duration", elapsed)
 
 	case msg.Code == NewBlockMsg:
+        start := time.Now()
 		// Retrieve and decode the propagated block
 		var request newBlockData
 		if err := msg.Decode(&request); err != nil {
@@ -715,6 +728,8 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				go pm.synchronise(p)
 			}
 		}
+		elapsed := time.Since(start)
+		log.Info("NewBlock took", "duration", elapsed)
 
 	case msg.Code == TxMsg:
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
@@ -722,11 +737,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			log.Info("Breaking bad")
 			//break
 		}
-		diff_ratio := 0.2
+		/*diff_ratio := 0.2
 		if rand.Float64() < diff_ratio {
 			log.Info("Skipping")
 			//break
-		}
+		}*/
 		// Transactions can be processed, parse all of them and deliver to the pool
 		var txs []*types.Transaction
 		if err := msg.Decode(&txs); err != nil {
@@ -772,7 +787,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			return nil
 		}
 		c = 8 * math.Pow(math.Log(2), 2)
-		tau = 50.0
+		tau = 21
 		k = 3
 		a = float64(n) / (c * tau)
 		fpr := a / float64((m - n) + 1)
@@ -780,7 +795,12 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		log.Info("m", "m", m)
 		log.Info("n", "n", n)
 		log.Info("Calculated FPR", "fpr", fmt.Sprintf("%.8f", fpr))
-		b := NewWithEstimates(n, 0.0001)
+        b := NewWithEstimates(n, fpr)
+        addFn := b.Add
+        if pm.useBloomWithoutHash {
+            addFn = b.NoHashAdd
+        }
+		log.Info("b.k", "b.k", b.k)
 		nCells := int(math.Ceil(a * 1.5))
 		nCellsCeil := 1
 		log.Info("Starting with", "ncells", nCells)
@@ -790,8 +810,8 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			nCells >>= 1
 			nCellsCeil <<= 1
 		}
-		if nCellsCeil < 32 {
-			nCellsCeil = 32
+		if nCellsCeil < 8 {
+			nCellsCeil = 8
 		}
 		//log.Info("Number of cells in IBLT", "nCells", nCellsCeil)
 		ib := NewIBLT(int(k), nCellsCeil)
@@ -804,7 +824,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			//log.Info("Adding", "tx hash", tx.Hash())
 			tx_hash := tx.Hash().Bytes()[:5]
 			tx_hash_string := string(tx_hash[:])
-			b.Add(tx_hash)
+			addFn(tx_hash)
 			ib.Add(tx_hash)
 			//ttx := pm.blockchain.GetTxByHash(tx.Hash())
 			//log.Info("TTx", "ttx", ttx)
@@ -822,9 +842,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		elapsed = time.Since(start)
 		log.Info("Sorting stuff took", "duration", elapsed)
-		log.Info("Sending bloom", "local", b)
-		log.Info("Sending IBLT", "local", ib)
-		log.Info("Sending indexArray", "local", indexArray)
+		//log.Info("Sending bloom", "local", b)
+		//log.Info("Sending IBLT", "local", ib)
+		//log.Info("Sending indexArray", "local", indexArray)
 		i, _ := ib.MarshalBinary()
 		//b.AddString("test")
 		//log.Info("Testing bloom", "r", b.TestString("test"))
@@ -835,7 +855,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		//mb.GobDecode(bb)
 		//log.Info("Recovered bloom", "bloom", b)
 		//log.Info("Equality check", "bloom", mb.Equal(b))
-		p.SendGraphene(query.Hash, i, bb, uint(nCellsCeil), uint(fpr), uint(n), indexArray, block.Uncles())
+
+        // include m again in the message so we don't have to scan the mempool to calculate its length to
+        // calculate FPR in GrapheneMsg handler
+		p.SendGraphene(query.Hash, i, bb, uint(nCellsCeil), uint(m), uint(n), indexArray, block.Uncles())
+
 		elapsed = time.Since(start)
 		log.Info("GetGraphene took", "duration", elapsed)
 
@@ -846,6 +870,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		if pm.cpuProfile != "" {
 			grapheneProfile.Add(msg, 1)
 		}
+		var c, tau, a float64
 		var k uint
 		k = 3
 
@@ -853,9 +878,17 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		receivedIBLT.UnmarshalBinary(body.GrapheneIBLT)
 		log.Info("Received uncles", "length", len(body.Uncles))
 
-		//b := NewBloomFilter(body.NBloom, k)
-		b := NewWithEstimates(body.NTxs, 0.0001)
-		b.GobDecode(body.GrapheneBloom)
+		c = 8 * math.Pow(math.Log(2), 2)
+		tau = 21
+		k = 3
+		a = float64(body.NTxs) / (c * tau)
+		fpr := a / float64((body.NTxPool - body.NTxs) + 1)
+        b := NewWithEstimates(body.NTxs, fpr)
+        testFn := b.Test
+        if pm.useBloomWithoutHash {
+           testFn = b.NoHashTest
+        }
+        b.GobDecode(body.GrapheneBloom)
 		//log.Info("Received bloom", "bloom", b)
 		nAddedToBloom := 0
 		nTested := 0
@@ -870,9 +903,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				tx_hash := tx.Hash().Bytes()[:5]
 				tx_hash_string := string(tx_hash[:])
 				short_tx_hash_map[tx_hash_string] = tx
-				if b.Test(tx_hash) {
+				if testFn(tx_hash) {
 					nAddedToBloom += 1
-					//localIBLT.Add(tx_hash)
+					localIBLT.Add(tx_hash)
 				}
                 //elapsed = time.Since(start)
                 //log.Info("Test took", "duration", elapsed)
@@ -882,7 +915,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		for nTested < 60000 {
 			if b.Test(pm.fake_pendingPool[nTested]) {
 				nAddedToBloom += 1
-				//localIBLT.Add(pm.fake_pendingPool[nTested])
+				localIBLT.Add(pm.fake_pendingPool[nTested])
 			}
 			nTested += 1
 		}
@@ -896,9 +929,8 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		decode, _ := localIBLT.Decode()
 		elapsed = time.Since(start)
 		log.Info("Decode stuff took", "duration", elapsed)
-		log.Info("Graphene says", "n transactions", body.NTxs)
+		log.Info("Graphene says", "nTxs", body.NTxs)
 		log.Info("IBLT cells", "nIBLT", body.NIBLT)
-		log.Info("FPR", "fpr", body.FPR)
 		log.Info("Tested in bloom", "nTested", nTested)
 		log.Info("Added to bloom", "nAddedToBloom", nAddedToBloom)
 		log.Info("Extra added to IBLT", "nAdded", len(decode.Added))

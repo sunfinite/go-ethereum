@@ -113,6 +113,7 @@ type Config struct {
 	EnablePreimageRecording bool
     NoGossip bool
     UseGraphene bool
+    UseBloomWithoutHash bool
     CpuProfile string
 
 	// Miscellaneous options

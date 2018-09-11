@@ -55,8 +55,8 @@ import (
 	"fmt"
 	"io"
 	"math"
-    "time"
-	"github.com/ethereum/go-ethereum/log"
+    //"time"
+	//"github.com/ethereum/go-ethereum/log"
 	"github.com/spaolacci/murmur3"
 	"github.com/willf/bitset"
 )
@@ -81,7 +81,7 @@ func max(x, y uint) uint {
 // We force _m_ and _k_ to be at least one to avoid panics.
 func NewBloomFilter(m uint, k uint) *BloomFilter {
 	return &BloomFilter{max(1, m), max(1, k), bitset.New(m)}
-}
+} 
 
 // From creates a new Bloom filter with len(_data_) * 64 bits and _k_ hashing
 // functions. The data slice is not going to be reset.
@@ -151,7 +151,7 @@ func (f *BloomFilter) K() uint {
 }
 
 // Add data to the Bloom Filter. Returns the filter (allows chaining)
-func (f *BloomFilter) Add(data []byte) *BloomFilter {
+func (f *BloomFilter) NoHashAdd(data []byte) *BloomFilter {
 	//h := baseHashes(data)
     //log.Info("k", "k", f.k)
     l := uint(len(data))
@@ -193,20 +193,38 @@ func (f *BloomFilter) AddString(data string) *BloomFilter {
 // Test returns true if the data is in the BloomFilter, false otherwise.
 // If true, the result might be a false positive. If false, the data
 // is definitely not in the set.
-func (f *BloomFilter) Test(data []byte) bool {
-    start := time.Now()
+func (f *BloomFilter) NoHashTest(data []byte) bool {
+//    start := time.Now()
 //	h := baseHashes(data)
     l := uint(len(data))
 	for i := uint(0); i < f.k; i++ {
 		if !f.b.Test(uint(data[i % l]) % f.m) {
         //if !f.b.Test(f.location(h, i)) {
-            elapsed := time.Since(start)
-            log.Info("Test took", "duration", elapsed)
+            //elapsed := time.Since(start)
+            //log.Info("Test took", "duration", elapsed)
 			return false
 		}
 	}
-    elapsed := time.Since(start)
-    log.Info("Test took", "duration", elapsed)
+    //elapsed := time.Since(start)
+    //log.Info("Test took", "duration", elapsed)
+	return true
+}
+
+func (f *BloomFilter) Add(data []byte) *BloomFilter {
+	h := baseHashes(data)
+	for i := uint(0); i < f.k; i++ {
+		f.b.Set(f.location(h, i))
+	}
+	return f
+}
+
+func (f *BloomFilter) Test(data []byte) bool {
+	h := baseHashes(data)
+	for i := uint(0); i < f.k; i++ {
+		if !f.b.Test(f.location(h, i)) {
+			return false
+		}
+	}
 	return true
 }
 
